@@ -12,6 +12,10 @@ pub struct Prefs {
     map: HashMap<String, Pref>,
 }
 
+/// One pin for the output volume, shared by every device, so switching outputs keeps it.
+pub const MASTER: &str = "master";
+
+/// Old per-device key, only read to carry an existing pin over to `MASTER`.
 pub fn dev_key(id: &str) -> String {
     format!("dev:{id}")
 }
@@ -31,6 +35,13 @@ fn path() -> Option<PathBuf> {
 impl Prefs {
     pub fn get(&self, key: &str) -> Pref {
         self.map.get(key).copied().unwrap_or_default()
+    }
+
+    /// Turn a pin made on one device into the shared one, unless a shared pin already exists.
+    pub fn adopt_master(&mut self, old_key: &str) {
+        if let Some(p) = self.map.get(old_key).copied().filter(|_| !self.map.contains_key(MASTER)) {
+            self.map.insert(MASTER.into(), p);
+        }
     }
 
     pub fn set_vol(&mut self, key: &str, pct: u8) {
@@ -104,13 +115,23 @@ mod tests {
     fn roundtrip_and_prune() {
         let mut p = Prefs::default();
         p.set_vol(&app_key("spotify.exe"), 30);
-        p.set_mute(&dev_key("{0.0.0}.{abc}"), Some(true));
+        p.set_mute(MASTER, Some(true));
         p.set_mute(&app_key("gone.exe"), Some(true));
         p.set_mute(&app_key("gone.exe"), None);
         let q = Prefs::parse(&p.serialize());
         assert_eq!(q.get("app:spotify.exe"), Pref { vol: Some(30), mute: None });
-        assert_eq!(q.get("dev:{0.0.0}.{abc}"), Pref { vol: None, mute: Some(true) });
+        assert_eq!(q.get(MASTER), Pref { vol: None, mute: Some(true) });
         assert_eq!(q.get("app:gone.exe"), Pref::default());
+    }
+
+    #[test]
+    fn old_device_pin_becomes_master_once() {
+        let mut p = Prefs::default();
+        p.set_vol(&dev_key("a"), 40);
+        p.adopt_master(&dev_key("a"));
+        p.set_vol(&dev_key("b"), 90);
+        p.adopt_master(&dev_key("b"));
+        assert_eq!(p.get(MASTER).vol, Some(40));
     }
 
     #[test]

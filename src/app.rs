@@ -2,7 +2,7 @@
 use crate::{
     audio::Audio,
     routing,
-    store::{app_key, dev_key, Prefs},
+    store::{app_key, dev_key, Prefs, MASTER},
 };
 use std::{cell::RefCell, time::{Duration, Instant}};
 
@@ -47,7 +47,10 @@ pub fn short_name(name: &str) -> &str {
 }
 
 impl App {
-    pub fn new(audio: Audio, prefs: Prefs) -> App {
+    pub fn new(audio: Audio, mut prefs: Prefs) -> App {
+        if let Some(d) = audio.default_device() {
+            prefs.adopt_master(&dev_key(&d.id));
+        }
         let now = Instant::now();
         App { audio, prefs, burst: 0, burst_start: now, pause_until: now }
     }
@@ -55,7 +58,7 @@ impl App {
     fn pref_key(&self, row: Option<&str>) -> Option<String> {
         match row {
             Some(k) => Some(app_key(k)),
-            None => self.audio.default_device().map(|d| dev_key(&d.id)),
+            None => Some(MASTER.to_string()),
         }
     }
 
@@ -70,7 +73,7 @@ impl App {
             path: None,
             vol: d.vol(),
             mute: d.mute(),
-            pinned: pinned(dev_key(&d.id)),
+            pinned: pinned(MASTER.to_string()),
             device: None,
         }];
         let routable = self.audio.devices.len() > 1 && routing::available();

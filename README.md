@@ -16,14 +16,14 @@ It is written in Rust against the Win32 and Core Audio APIs directly. No runtime
 - **Device button on each app row**: send that app to another output device, or back to "Default (follow Windows)". This is the same per-app setting as Windows' *Sound > Volume mixer*, so Windows remembers it and other tools see it.
 - **Middle click** the tray icon: mute or unmute the current output device.
 - **Right click** the tray icon: pick the default output device (the active one is checked). It sets the console, multimedia and communications roles.
-- **Remembers what you set.** Moving a slider or pressing mute pins that value for that device or app. A small pin shows next to pinned rows. Right click a row and choose *Forget saved volume and mute* to unpin it.
+- **Remembers what you set.** Moving a slider or pressing mute pins that value for the output volume or for that app. The output pin is shared by every output device, so switching outputs keeps the same volume. A small pin shows next to pinned rows. Right click a row and choose *Forget saved volume and mute* to unpin it.
 - **Keeps it.** Any outside change to a pinned value is reverted immediately, including the Windows volume keys and apps that reset their own volume.
 - **Re-applies on start and on arrival.** Pinned values are applied at launch and whenever the device or app appears again.
 - **Keyboard**: arrows move between rows, left and right change the volume (2%, hold Shift for 10%), Space or M mutes, Enter opens the device menu of an app, Esc closes.
 - Follows the system light/dark theme and accent color, per-monitor DPI, and a taskbar on any edge.
 - Starting it again while it is running opens the flyout of the running copy.
 
-Volume and mute are pinned independently: muting an app does not pin its volume, and the other way around. Apps are identified by executable name, devices by their Windows endpoint ID.
+Volume and mute are pinned independently: muting an app does not pin its volume, and the other way around. Apps are identified by executable name.
 
 ## Install
 

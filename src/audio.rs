@@ -1,7 +1,7 @@
 //! Core Audio model. All COM callbacks only post a coalesced message to the
 //! main window; every real read or write happens on the main thread.
 #![allow(non_snake_case)] // COM method names mirror the Windows headers
-use crate::store::{app_key, dev_key, Prefs};
+use crate::store::{app_key, Prefs, MASTER};
 use std::{cell::RefCell, collections::HashMap, ffi::c_void, ptr, sync::atomic::{AtomicU32, Ordering::SeqCst}};
 use windows::{
     core::*,
@@ -383,7 +383,8 @@ impl Audio {
     pub fn enforce(&self, prefs: &Prefs) -> u32 {
         let mut fixes = 0;
         for d in &self.devices {
-            let p = prefs.get(&dev_key(&d.id));
+            // The output pin follows the default device, so switching outputs keeps the same volume.
+            let p = if d.is_default { prefs.get(MASTER) } else { Default::default() };
             if let Some(v) = p.vol.map(|v| v as f32 / 100.0).filter(|v| (d.vol() - v).abs() > TOLERANCE) {
                 d.set_vol(v);
                 fixes += 1;
