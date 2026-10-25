@@ -1,0 +1,26 @@
+1 ICON "assets/icon.ico"
+
+1 VERSIONINFO
+FILEVERSION 0,2,0,0
+PRODUCTVERSION 0,2,0,0
+FILEOS 0x4
+FILETYPE 0x1
+{
+  BLOCK "StringFileInfo"
+  {
+    BLOCK "040904B0"
+    {
+      VALUE "ProductName", "Latchmix"
+      VALUE "FileDescription", "Latchmix tray volume mixer"
+      VALUE "FileVersion", "0.2.0"
+      VALUE "ProductVersion", "0.2.0"
+      VALUE "OriginalFilename", "latchmix.exe"
+      VALUE "InternalName", "latchmix"
+      VALUE "LegalCopyright", "MIT License"
+    }
+  }
+  BLOCK "VarFileInfo"
+  {
+    VALUE "Translation", 0x409, 1200
+  }
+}
