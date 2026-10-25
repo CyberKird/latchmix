@@ -12,7 +12,7 @@ It is written in Rust against the Win32 and Core Audio APIs directly. No runtime
 
 ## What it does
 
-- **Left click** the tray icon: a flyout with the master volume and mute of the current output device, plus one slider and mute button per app that has an audio session on that device. Pick another output in the right-click menu to see and set that one. A thin level bar under each slider shows the live output peak (60 dB scale). Mouse wheel over a row changes it in 2% steps.
+- **Left click** the tray icon: a flyout with the master volume and mute of the current output device, plus one slider and mute button per app that has an audio session on that device. Pick another output in the right-click menu to see and set that one. A thin level bar under each slider shows the live output peak (60 dB scale). Mouse wheel over a row changes it in 2% steps. When more apps are playing than fit on screen, the wheel scrolls the list (a thin bar on the right edge shows it continues) and still sets the volume over a slider; the arrow keys scroll too.
 - **Device button on each app row**: send that app to another output device, or back to "Default (follow Windows)". This is the same per-app setting as Windows' *Sound > Volume mixer*, so Windows remembers it and other tools see it. The app then appears under that output.
 - **Middle click** the tray icon: mute or unmute the current output device.
 - **Right click** the tray icon: pick the default output device (the active one is checked); only your click changes it, Latchmix never does it by itself. Every output keeps its own volume and app settings. The same menu has *Start with Windows*, *Update automatically* and *Check for updates now*.
@@ -72,7 +72,6 @@ Working set includes shared system DLL pages, so private memory is the fairer nu
 ## Not implemented
 
 - Global hotkeys, input devices (microphones), translations.
-- Scrolling when more apps are playing than fit on screen: extra apps are cut off.
 - When several processes of one app have different volumes, the row shows the first one and a change applies to all of them.
 
 ## Limitations

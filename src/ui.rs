@@ -35,6 +35,8 @@ struct Ui {
     nrows: usize,
     drag: Option<Option<String>>,
     last_pct: Option<u8>,
+    /// Apps scrolled off the top when they do not all fit.
+    scroll: usize,
     last_hide: Option<Instant>,
     menu_open: bool,
     focus: usize,
@@ -54,17 +56,38 @@ fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> Option<R> {
 }
 
 
-/// Rows that fit the work area. Extra apps are cut off (no scrolling yet).
-fn rows() -> Option<Vec<Row>> {
-    let mut rows = app::with(|a| a.rows())?;
+/// The rows that fit the work area: the output row, then the apps from the scroll offset on.
+/// Also returns how many apps there are in total, so callers can tell when the list overflows.
+fn view() -> Option<(Vec<Row>, usize)> {
+    let all = app::with(|a| a.rows())?;
     let (s, avail) = ui(|u| {
         let s = u.dpi as f32 / 96.0;
         (s, (u.work.bottom - u.work.top) as f32 - 2.0 * EDGE * s)
     })?;
-    while rows.len() > 1 && total_h(s, rows.len()) as f32 > avail {
-        rows.pop();
+    let mut fit = all.len();
+    while fit > 1 && total_h(s, fit) as f32 > avail {
+        fit -= 1;
     }
-    Some(rows)
+    let (apps, shown) = (all.len() - 1, fit - 1);
+    let off = ui(|u| { u.scroll = u.scroll.min(apps - shown); u.scroll })?;
+    let mut it = all.into_iter();
+    let rows = it.next().into_iter().chain(it.skip(off).take(shown)).collect();
+    Some((rows, apps))
+}
+
+fn rows() -> Option<Vec<Row>> {
+    view().map(|v| v.0)
+}
+
+/// Scroll the app list by `by` rows (positive = down), clamped. Returns true if it moved.
+fn scroll_by(by: i32) -> bool {
+    let Some((rows, apps)) = view() else { return false };
+    let max = (apps + 1 - rows.len()) as i32;
+    ui(|u| {
+        let to = (u.scroll as i32 + by).clamp(0, max) as usize;
+        std::mem::replace(&mut u.scroll, to) != to
+    })
+    .unwrap_or(false)
 }
 
 // ---- show / hide ----------------------------------------------------------
@@ -105,7 +128,7 @@ fn show(cursor: POINT) {
         let h = total_h(s, nrows);
         u.pos = place_for(u, h);
         u.visible = true;
-        (u.focus, u.kbd) = (0, false);
+        (u.focus, u.kbd, u.scroll) = (0, false, 0);
         u.anim = Some(Instant::now());
         (u.hwnd, u.pos.0, u.pos.1, (W * s).round() as i32, h)
     }) else { return };
@@ -248,8 +271,14 @@ fn wheel(hwnd: HWND, wp: WPARAM, l: LPARAM) {
     let mut p = POINT { x: (l.0 & 0xffff) as i16 as i32, y: ((l.0 >> 16) & 0xffff) as i16 as i32 };
     unsafe { let _ = ScreenToClient(hwnd, &mut p); }
     let Some(s) = ui(|u| u.dpi as f32 / 96.0) else { return };
-    let Some(rows) = rows() else { return };
-    if let Some((i, _)) = hit(s, &rows, p.x as f32, p.y as f32) {
+    let Some((rows, apps)) = view() else { return };
+    let part = hit(s, &rows, p.x as f32, p.y as f32);
+    // With more apps than fit, the wheel scrolls; over a slider it still sets the volume.
+    if apps + 1 > rows.len() && !matches!(part, Some((_, Part::Slider))) {
+        if scroll_by(-delta) { refresh(); }
+        return;
+    }
+    if let Some((i, _)) = part {
         let pct = ((rows[i].vol * 100.0).round() as i32 + delta * 2).clamp(0, 100) as u8;
         app::with(|a| { a.pin_vol(rows[i].key.as_deref(), pct); a.prefs.save(); });
         refresh();
@@ -280,7 +309,8 @@ fn context_menu(hwnd: HWND, l: LPARAM) {
 
 /// Arrows move between rows and change volume, space or M mutes, Enter opens the device menu.
 fn key_down(hwnd: HWND, vk: u16) {
-    let Some(rows) = rows() else { return };
+    let Some((rows, apps)) = view() else { return };
+    let (more_below, more_above) = (ui(|u| u.scroll + rows.len() < apps + 1), ui(|u| u.scroll > 0));
     let Some((focus, s)) = ui(|u| {
         u.kbd = true;
         u.focus = u.focus.min(rows.len() - 1);
@@ -289,8 +319,12 @@ fn key_down(hwnd: HWND, vk: u16) {
     let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
     let key = rows[focus].key.clone();
     match vk {
-        v if v == VK_DOWN.0 || (v == VK_TAB.0 && !shift) => { ui(|u| u.focus = (focus + 1) % rows.len()); }
-        v if v == VK_UP.0 || v == VK_TAB.0 => { ui(|u| u.focus = (focus + rows.len() - 1) % rows.len()); }
+        v if v == VK_DOWN.0 || (v == VK_TAB.0 && !shift) => {
+            if focus + 1 == rows.len() && more_below == Some(true) { scroll_by(1); } else { ui(|u| u.focus = (focus + 1) % rows.len()); }
+        }
+        v if v == VK_UP.0 || v == VK_TAB.0 => {
+            if focus == 1 && more_above == Some(true) { scroll_by(-1); } else { ui(|u| u.focus = (focus + rows.len() - 1) % rows.len()); }
+        }
         v if v == VK_LEFT.0 || v == VK_RIGHT.0 => {
             let step = if shift { 10 } else { 2 } * if v == VK_LEFT.0 { -1 } else { 1 };
             let pct = ((rows[focus].vol * 100.0).round() as i32 + step).clamp(0, 100) as u8;
@@ -351,9 +385,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l: LPARAM) -> LRESU
         WM_PAINT => unsafe {
             let mut ps = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut ps);
-            if let Some(rows) = rows() {
+            if let Some((rows, apps)) = view() {
                 ui(|u| {
-                    let v = View { dpi: u.dpi, drag: &u.drag, meters: &u.meters, focus: u.kbd.then_some(u.focus) };
+                    let v = View { dpi: u.dpi, drag: &u.drag, meters: &u.meters, focus: u.kbd.then_some(u.focus), scroll: (u.scroll, apps) };
                     render(&mut u.gdi, &v, &rows, hdc)
                 });
             }

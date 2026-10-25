@@ -228,6 +228,8 @@ pub struct View<'a> {
     pub drag: &'a Option<Option<String>>,
     pub meters: &'a HashMap<Option<String>, f32>,
     pub focus: Option<usize>,
+    /// (apps scrolled off the top, apps in total)
+    pub scroll: (usize, usize),
 }
 
 fn mix(a: u32, b: u32, t: f32) -> u32 {
@@ -250,6 +252,14 @@ pub fn render(g: &mut Gdi, v: &View, rows: &[Row], hdc: HDC) {
     if let Some(i) = v.focus.filter(|i| *i < rows.len()) {
         let top = row_top(s, i);
         rrect(buf, w, h, ((PAD - 8.0) * s, top - 2.0 * s, (W - PAD + 8.0) * s, top + (ROW_H - 4.0) * s), 8.0 * s, mix(t.bg, t.text, 0.07));
+    }
+    let shown = rows.len() - 1;
+    if v.scroll.1 > shown && shown > 0 {
+        // A thin thumb on the right edge shows that the app list continues.
+        let (top, track) = (row_top(s, 1), shown as f32 * ROW_H * s);
+        let thumb = (track * shown as f32 / v.scroll.1 as f32).max(16.0 * s);
+        let y = top + (track - thumb) * v.scroll.0 as f32 / (v.scroll.1 - shown) as f32;
+        rrect(buf, w, h, ((W - 7.0) * s, y, (W - 4.0) * s, y + thumb), 1.5 * s, t.dim);
     }
     for (i, r) in rows.iter().enumerate() {
         let cy = center_y(s, i);
