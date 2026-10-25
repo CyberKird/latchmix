@@ -1,5 +1,5 @@
 //! Notification-area icon, right-click device menu and the start-with-Windows switch.
-use crate::{app, audio::set_default_device};
+use crate::{app, audio::set_default_device, update};
 use std::{cell::RefCell, ffi::c_void, mem::size_of, ptr::null_mut};
 use windows::{
     core::*,
@@ -16,6 +16,8 @@ const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const RUN_NAME: PCWSTR = w!("Latchmix");
 const CMD_AUTOSTART: usize = 1;
 const CMD_QUIT: usize = 2;
+const CMD_AUTOUPDATE: usize = 3;
+const CMD_CHECK: usize = 4;
 const CMD_DEVICE: usize = 1000;
 
 #[derive(Default)]
@@ -193,6 +195,9 @@ pub fn show_menu(hwnd: HWND) -> bool {
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let auto = if autostart_enabled() { MF_STRING | MF_CHECKED } else { MF_STRING };
         let _ = AppendMenuW(menu, auto, CMD_AUTOSTART, w!("Start with Windows"));
+        let upd = if update::auto_enabled() { MF_STRING | MF_CHECKED } else { MF_STRING };
+        let _ = AppendMenuW(menu, upd, CMD_AUTOUPDATE, w!("Update automatically"));
+        let _ = AppendMenuW(menu, MF_STRING, CMD_CHECK, w!("Check for updates now"));
         let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT, w!("Quit"));
         let mut p = POINT::default();
         let _ = GetCursorPos(&mut p);
@@ -202,6 +207,12 @@ pub fn show_menu(hwnd: HWND) -> bool {
         let _ = DestroyMenu(menu);
         match cmd {
             CMD_AUTOSTART => set_autostart(!autostart_enabled()),
+            CMD_AUTOUPDATE => {
+                let on = !update::auto_enabled();
+                update::set_auto(on);
+                if on { update::spawn_check(hwnd, false); }
+            }
+            CMD_CHECK => update::spawn_check(hwnd, true),
             CMD_QUIT => return true,
             c if c >= CMD_DEVICE => {
                 if let Some((id, ..)) = devices.get(c - CMD_DEVICE) {

@@ -1,8 +1,8 @@
 1 ICON "assets/icon.ico"
 
 1 VERSIONINFO
-FILEVERSION 0,3,2,0
-PRODUCTVERSION 0,3,2,0
+FILEVERSION 0,4,0,0
+PRODUCTVERSION 0,4,0,0
 FILEOS 0x4
 FILETYPE 0x1
 {
@@ -12,8 +12,8 @@ FILETYPE 0x1
     {
       VALUE "ProductName", "Latchmix"
       VALUE "FileDescription", "Latchmix tray volume mixer"
-      VALUE "FileVersion", "0.3.2"
-      VALUE "ProductVersion", "0.3.2"
+      VALUE "FileVersion", "0.4.0"
+      VALUE "ProductVersion", "0.4.0"
       VALUE "OriginalFilename", "latchmix.exe"
       VALUE "InternalName", "latchmix"
       VALUE "LegalCopyright", "GPL-3.0-or-later"

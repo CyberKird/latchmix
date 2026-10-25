@@ -7,6 +7,7 @@ mod tray;
 mod place;
 mod routing;
 mod ui;
+mod update;
 
 use audio::{take_events, Audio, EV_SESSIONS, EV_TOPOLOGY, EV_VOLUME, WM_AUDIO};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
@@ -20,6 +21,7 @@ use windows::{
 };
 
 const TIMER_TOPOLOGY: usize = 1;
+const TIMER_UPDATE: usize = 2;
 const WM_SHOW_FLYOUT: u32 = WM_APP + 3;
 const NIN_SELECT: u32 = WM_USER;
 const NIN_KEYSELECT: u32 = WM_USER + 1;
@@ -41,6 +43,29 @@ fn on_audio(hwnd: HWND) {
     }
 }
 
+fn on_update(hwnd: HWND) {
+    let Some((out, manual)) = update::take() else { return };
+    match out {
+        update::Outcome::UpToDate if manual => {
+            update::message(&format!("Latchmix {} is up to date.", update::version()), false);
+        }
+        update::Outcome::Available(v) => {
+            let ask = format!("Latchmix {v} is available (you have {}).\n\nInstall it and restart now?", update::version());
+            if !manual || update::message(&ask, true) {
+                update::spawn_install(hwnd, v, manual);
+            }
+        }
+        update::Outcome::Installed => {
+            update::relaunch();
+            unsafe { PostQuitMessage(0) };
+        }
+        update::Outcome::Failed(e) if manual => {
+            update::message(&format!("The update did not work: {e}."), false);
+        }
+        _ => {}
+    }
+}
+
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_AUDIO => on_audio(hwnd),
@@ -55,6 +80,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l: LPARAM) -> LRESU
             tray::update(hwnd, false);
             ui::refresh();
         }
+        WM_TIMER if wp.0 == TIMER_UPDATE => {
+            if update::auto_enabled() { update::spawn_check(hwnd, false); }
+        }
+        update::WM_UPDATE => on_update(hwnd),
         tray::WM_TRAY => match (l.0 & 0xffff) as u32 {
             NIN_SELECT | NIN_KEYSELECT => {
                 let mut p = POINT::default();
@@ -82,7 +111,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l: LPARAM) -> LRESU
 
 fn main() -> Result<()> {
     unsafe {
-        let _single = CreateMutexW(None, true, w!("Local\\LatchmixSingleInstance"))?;
+        let mut _single = CreateMutexW(None, true, w!("Local\\LatchmixSingleInstance"))?;
+        // After an update the old copy is still shutting down: wait for it instead of handing over.
+        if std::env::args().any(|a| a == "--updated") {
+            for _ in 0..50 {
+                if GetLastError() != ERROR_ALREADY_EXISTS { break; }
+                let _ = CloseHandle(_single);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                _single = CreateMutexW(None, true, w!("Local\\LatchmixSingleInstance"))?;
+            }
+        }
         if GetLastError() == ERROR_ALREADY_EXISTS {
             // Launched again (Start menu, shortcut): show the flyout of the running copy.
             if let Ok(h) = FindWindowW(w!("LatchmixMain"), None) {
@@ -106,6 +144,9 @@ fn main() -> Result<()> {
         app::with(|a| a.enforce());
         tray::update(hwnd, true);
         tray::init_autostart();
+        update::clean_up();
+        SetTimer(Some(hwnd), TIMER_UPDATE, update::CHECK_EVERY_MS, None);
+        if update::auto_enabled() { update::spawn_check(hwnd, false); }
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {

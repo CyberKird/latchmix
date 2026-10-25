@@ -15,7 +15,7 @@ It is written in Rust against the Win32 and Core Audio APIs directly. No runtime
 - **Left click** the tray icon: a flyout with the master volume and mute of the current output device, plus one slider and mute button per app that has an audio session, on any output device. A thin level bar under each slider shows the live output peak (60 dB scale). Mouse wheel over a row changes it in 2% steps.
 - **Device button on each app row**: send that app to another output device, or back to "Default (follow Windows)". This is the same per-app setting as Windows' *Sound > Volume mixer*, so Windows remembers it and other tools see it.
 - **Middle click** the tray icon: mute or unmute the current output device.
-- **Right click** the tray icon: pick the default output device (the active one is checked). It sets the console, multimedia and communications roles.
+- **Right click** the tray icon: pick the default output device (the active one is checked). It sets the console, multimedia and communications roles. The same menu has *Start with Windows*, *Update automatically* and *Check for updates now*.
 - **Remembers what you set.** Moving a slider or pressing mute pins that value for the output volume or for that app. The output pin is shared by every output device, so switching outputs keeps the same volume. A small pin shows next to pinned rows. Right click a row and choose *Forget saved volume and mute* to unpin it.
 - **Keeps it.** Any outside change to a pinned value is reverted immediately, including the Windows volume keys and apps that reset their own volume.
 - **Re-applies on start and on arrival.** Pinned values are applied at launch and whenever the device or app appears again.
@@ -31,6 +31,10 @@ Download `latchmix.exe` from the [releases page](../../releases) (or build it, s
 
 The exe is not code signed, so SmartScreen may ask for confirmation the first time.
 
+## Updates
+
+Off by default. *Check for updates now* in the right-click menu asks GitHub for the latest release and, if it is newer, asks before installing. Ticking *Update automatically* checks at start and every 24 hours and installs without asking, then restarts (your pins are applied again at once). Both only talk to `api.github.com` and `github.com`, over HTTPS. The download is checked against the SHA-256 published with the release before the old exe is replaced (it is kept as `latchmix.old` until the next start). The release is not code signed, so that hash only protects against a damaged download.
+
 ## Build
 
 Requirements: Windows 10 or 11, the Rust toolchain (stable, MSVC target) and the Visual Studio Build Tools with the C++ workload.
@@ -40,11 +44,11 @@ cargo build --release
 cargo test
 ```
 
-The result is a single ~320 KB executable. The file icon and version info are embedded with `rc.exe` from the Windows SDK; if the SDK is not installed the build still works, just without them.
+The result is a single ~410 KB executable. The file icon and version info are embedded with `rc.exe` from the Windows SDK; if the SDK is not installed the build still works, just without them.
 
 ## Where settings live
 
-`%APPDATA%\latchmix\prefs.tsv`, one line per pinned item: `key<TAB>volume percent<TAB>mute`. A `-` means "not pinned". It is plain text and safe to edit while the app is closed. Nothing is sent anywhere.
+`%APPDATA%\latchmix\prefs.tsv`, one line per pinned item: `key<TAB>volume percent<TAB>mute`. A `-` means "not pinned". It is plain text and safe to edit while the app is closed. Nothing is sent anywhere, except the update check described below.
 
 ## How it stays light
 
