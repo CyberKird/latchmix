@@ -1,7 +1,8 @@
 # Latchmix
 
 A tiny Windows 11 tray volume mixer that **remembers your volume and mute settings and keeps them**.
-r<a href="https://ko-fi.com/joltarise"><img src="https://raw.githubusercontent.com/CyberKird/.github/main/assets/ko-fi-button.svg" alt="Support me on Ko-fi" width="200"></a>
+r
+<a href="https://ko-fi.com/joltarise"><img src="https://raw.githubusercontent.com/CyberKird/.github/main/assets/ko-fi-button.svg" alt="Support me on Ko-fi" width="200"></a>
 
 Set Spotify to 30%, mute Discord, mute your speakers: Latchmix puts them back whenever Windows, a game or the app itself changes them, after a restart, and when a device or app shows up again.
 
