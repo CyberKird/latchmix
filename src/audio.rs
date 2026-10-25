@@ -1,7 +1,7 @@
 //! Core Audio model. All COM callbacks only post a coalesced message to the
 //! main window; every real read or write happens on the main thread.
 #![allow(non_snake_case)] // COM method names mirror the Windows headers
-use crate::store::{app_key, Prefs, MASTER};
+use crate::store::{app_key, dev_key, Prefs};
 use std::{cell::RefCell, collections::HashMap, ffi::c_void, ptr, sync::atomic::{AtomicU32, Ordering::SeqCst}};
 use windows::{
     core::*,
@@ -307,11 +307,11 @@ impl Audio {
         self.devices.iter().flat_map(|d| d.sessions.iter()).filter(move |s| s.key == key)
     }
 
-    /// One row per executable across every output device (Chrome often owns several sessions).
-    /// The device shown is where it is actually playing, preferring an active session.
+    /// One row per executable on the current output device (Chrome often owns several sessions).
+    /// Other outputs keep their own settings and show up when you switch to them.
     pub fn apps(&self) -> Vec<AppRow> {
         let mut rows: Vec<(AppRow, bool)> = vec![];
-        for d in &self.devices {
+        for d in self.devices.iter().filter(|d| d.is_default) {
             for s in &d.sessions {
                 let state = unsafe { s.ctl.GetState() };
                 if state == Ok(AudioSessionStateExpired) { continue; }
@@ -320,6 +320,9 @@ impl Audio {
                     Some((r, was_active)) => {
                         if active && !*was_active {
                             (r.device_id, r.device, *was_active) = (d.id.clone(), d.name.clone(), true);
+                            // Volume and mute are per device, so show the ones of the device it plays on.
+                            r.vol = unsafe { s.vol.GetMasterVolume().unwrap_or(0.0) };
+                            r.mute = unsafe { s.vol.GetMute().map(|b| b.as_bool()).unwrap_or(false) };
                         }
                     }
                     None => rows.push((
@@ -345,7 +348,7 @@ impl Audio {
     /// Peak per executable (the loudest of its sessions).
     pub fn app_peaks(&self) -> Vec<(String, f32)> {
         let mut out: Vec<(String, f32)> = vec![];
-        for s in self.devices.iter().flat_map(|d| d.sessions.iter()) {
+        for s in self.devices.iter().filter(|d| d.is_default).flat_map(|d| d.sessions.iter()) {
             let p = unsafe { s.meter.GetPeakValue().unwrap_or(0.0) };
             match out.iter_mut().find(|(k, _)| *k == s.key) {
                 Some(e) => e.1 = e.1.max(p),
@@ -355,14 +358,19 @@ impl Audio {
         out
     }
 
-    pub fn set_app_vol(&self, key: &str, v: f32) {
-        for s in self.sessions_of(key) {
+    /// Sessions of one app on one output device.
+    fn sessions_on<'a>(&'a self, dev_id: &'a str, key: &'a str) -> impl Iterator<Item = &'a Session> {
+        self.devices.iter().filter(move |d| d.id == dev_id).flat_map(|d| d.sessions.iter()).filter(move |s| s.key == key)
+    }
+
+    pub fn set_app_vol(&self, dev_id: &str, key: &str, v: f32) {
+        for s in self.sessions_on(dev_id, key) {
             unsafe { let _ = s.vol.SetMasterVolume(v.clamp(0.0, 1.0), ptr::null()); }
         }
     }
 
-    pub fn set_app_mute(&self, key: &str, m: bool) {
-        for s in self.sessions_of(key) {
+    pub fn set_app_mute(&self, dev_id: &str, key: &str, m: bool) {
+        for s in self.sessions_on(dev_id, key) {
             unsafe { let _ = s.vol.SetMute(m, ptr::null()); }
         }
     }
@@ -383,8 +391,7 @@ impl Audio {
     pub fn enforce(&self, prefs: &Prefs) -> u32 {
         let mut fixes = 0;
         for d in &self.devices {
-            // The output pin follows the default device, so switching outputs keeps the same volume.
-            let p = if d.is_default { prefs.get(MASTER) } else { Default::default() };
+            let p = prefs.get(&dev_key(&d.id));
             if let Some(v) = p.vol.map(|v| v as f32 / 100.0).filter(|v| (d.vol() - v).abs() > TOLERANCE) {
                 d.set_vol(v);
                 fixes += 1;
@@ -394,7 +401,7 @@ impl Audio {
                 fixes += 1;
             }
             for s in &d.sessions {
-                let p = prefs.get(&app_key(&s.key));
+                let p = prefs.get(&app_key(&d.id, &s.key));
                 let cur = unsafe { s.vol.GetMasterVolume().unwrap_or(0.0) };
                 if let Some(v) = p.vol.map(|v| v as f32 / 100.0).filter(|v| (cur - v).abs() > TOLERANCE) {
                     unsafe { let _ = s.vol.SetMasterVolume(v, ptr::null()); }

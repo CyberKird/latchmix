@@ -12,18 +12,18 @@ It is written in Rust against the Win32 and Core Audio APIs directly. No runtime
 
 ## What it does
 
-- **Left click** the tray icon: a flyout with the master volume and mute of the current output device, plus one slider and mute button per app that has an audio session, on any output device. A thin level bar under each slider shows the live output peak (60 dB scale). Mouse wheel over a row changes it in 2% steps.
-- **Device button on each app row**: send that app to another output device, or back to "Default (follow Windows)". This is the same per-app setting as Windows' *Sound > Volume mixer*, so Windows remembers it and other tools see it.
+- **Left click** the tray icon: a flyout with the master volume and mute of the current output device, plus one slider and mute button per app that has an audio session on that device. Pick another output in the right-click menu to see and set that one. A thin level bar under each slider shows the live output peak (60 dB scale). Mouse wheel over a row changes it in 2% steps.
+- **Device button on each app row**: send that app to another output device, or back to "Default (follow Windows)". This is the same per-app setting as Windows' *Sound > Volume mixer*, so Windows remembers it and other tools see it. The app then appears under that output.
 - **Middle click** the tray icon: mute or unmute the current output device.
-- **Right click** the tray icon: pick the default output device (the active one is checked). It sets the console, multimedia and communications roles. The same menu has *Start with Windows*, *Update automatically* and *Check for updates now*.
-- **Remembers what you set.** Moving a slider or pressing mute pins that value for the output volume or for that app. The output pin is shared by every output device, so switching outputs keeps the same volume. A small pin shows next to pinned rows. Right click a row and choose *Forget saved volume and mute* to unpin it.
+- **Right click** the tray icon: pick the default output device (the active one is checked); only your click changes it, Latchmix never does it by itself. Every output keeps its own volume and app settings. The same menu has *Start with Windows*, *Update automatically* and *Check for updates now*.
+- **Remembers what you set.** Moving a slider or pressing mute pins that value for that output device or for that app on that output device. Every output keeps its own settings: the same app can sit at 30% on the speakers and 80% on the headphones, and switching outputs brings back what you set there. A small pin shows next to pinned rows. Right click a row and choose *Forget saved volume and mute* to unpin it.
 - **Keeps it.** Any outside change to a pinned value is reverted immediately, including the Windows volume keys and apps that reset their own volume.
 - **Re-applies on start and on arrival.** Pinned values are applied at launch and whenever the device or app appears again.
 - **Keyboard**: arrows move between rows, left and right change the volume (2%, hold Shift for 10%), Space or M mutes, Enter opens the device menu of an app, Esc closes.
 - Follows the system light/dark theme and accent color, per-monitor DPI, and a taskbar on any edge.
 - Starting it again while it is running opens the flyout of the running copy.
 
-Volume and mute are pinned independently: muting an app does not pin its volume, and the other way around. Apps are identified by executable name.
+Volume and mute are pinned independently: muting an app does not pin its volume, and the other way around. Apps are identified by executable name, devices by their Windows endpoint ID, and an app's pin belongs to the device it plays on.
 
 ## Install
 

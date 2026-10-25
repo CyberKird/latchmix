@@ -12,16 +12,14 @@ pub struct Prefs {
     map: HashMap<String, Pref>,
 }
 
-/// One pin for the output volume, shared by every device, so switching outputs keeps it.
-pub const MASTER: &str = "master";
-
-/// Old per-device key, only read to carry an existing pin over to `MASTER`.
+/// Output volume and mute of one device.
 pub fn dev_key(id: &str) -> String {
     format!("dev:{id}")
 }
 
-pub fn app_key(exe: &str) -> String {
-    format!("app:{exe}")
+/// An app's pin belongs to one output device: the same app can have a different volume on each.
+pub fn app_key(dev_id: &str, exe: &str) -> String {
+    format!("app:{dev_id}|{exe}")
 }
 
 pub fn dir() -> Option<PathBuf> {
@@ -37,10 +35,14 @@ impl Prefs {
         self.map.get(key).copied().unwrap_or_default()
     }
 
-    /// Turn a pin made on one device into the shared one, unless a shared pin already exists.
-    pub fn adopt_master(&mut self, old_key: &str) {
-        if let Some(p) = self.map.get(old_key).copied().filter(|_| !self.map.contains_key(MASTER)) {
-            self.map.insert(MASTER.into(), p);
+    /// Pins saved by older versions were not tied to a device ("master", "app:exe"):
+    /// give them to the given device, once, and drop the old keys.
+    pub fn migrate(&mut self, dev_id: &str) {
+        let old: Vec<String> = self.map.keys().filter(|k| *k == "master" || (k.starts_with("app:") && !k.contains('|'))).cloned().collect();
+        for k in old {
+            let Some(p) = self.map.remove(&k) else { continue };
+            let new = if k == "master" { dev_key(dev_id) } else { app_key(dev_id, &k["app:".len()..]) };
+            self.map.entry(new).or_insert(p);
         }
     }
 
@@ -114,24 +116,28 @@ mod tests {
     #[test]
     fn roundtrip_and_prune() {
         let mut p = Prefs::default();
-        p.set_vol(&app_key("spotify.exe"), 30);
-        p.set_mute(MASTER, Some(true));
-        p.set_mute(&app_key("gone.exe"), Some(true));
-        p.set_mute(&app_key("gone.exe"), None);
+        p.set_vol(&app_key("d1", "spotify.exe"), 30);
+        p.set_mute(&dev_key("d1"), Some(true));
+        p.set_mute(&app_key("d1", "gone.exe"), Some(true));
+        p.set_mute(&app_key("d1", "gone.exe"), None);
         let q = Prefs::parse(&p.serialize());
-        assert_eq!(q.get("app:spotify.exe"), Pref { vol: Some(30), mute: None });
-        assert_eq!(q.get(MASTER), Pref { vol: None, mute: Some(true) });
-        assert_eq!(q.get("app:gone.exe"), Pref::default());
+        assert_eq!(q.get("app:d1|spotify.exe"), Pref { vol: Some(30), mute: None });
+        assert_eq!(q.get("app:d2|spotify.exe"), Pref::default());
+        assert_eq!(q.get("dev:d1"), Pref { vol: None, mute: Some(true) });
+        assert_eq!(q.get("app:d1|gone.exe"), Pref::default());
     }
 
     #[test]
-    fn old_device_pin_becomes_master_once() {
-        let mut p = Prefs::default();
-        p.set_vol(&dev_key("a"), 40);
-        p.adopt_master(&dev_key("a"));
-        p.set_vol(&dev_key("b"), 90);
-        p.adopt_master(&dev_key("b"));
-        assert_eq!(p.get(MASTER).vol, Some(40));
+    fn old_pins_go_to_one_device_once() {
+        let mut p = Prefs::parse("master\t40\t-\napp:spotify.exe\t30\t-\napp:d2|kept.exe\t10\t-\n");
+        p.migrate("d1");
+        assert_eq!(p.get("dev:d1").vol, Some(40));
+        assert_eq!(p.get("app:d1|spotify.exe").vol, Some(30));
+        assert_eq!(p.get("app:d2|kept.exe").vol, Some(10));
+        assert_eq!(p.get("master"), Pref::default());
+        assert_eq!(p.get("app:spotify.exe"), Pref::default());
+        p.migrate("d2");
+        assert_eq!(p.get("dev:d2"), Pref::default());
     }
 
     #[test]

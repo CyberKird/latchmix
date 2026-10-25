@@ -2,7 +2,7 @@
 use crate::{
     audio::Audio,
     routing,
-    store::{app_key, dev_key, Prefs, MASTER},
+    store::{app_key, dev_key, Prefs},
 };
 use std::{cell::RefCell, time::{Duration, Instant}};
 
@@ -49,16 +49,21 @@ pub fn short_name(name: &str) -> &str {
 impl App {
     pub fn new(audio: Audio, mut prefs: Prefs) -> App {
         if let Some(d) = audio.default_device() {
-            prefs.adopt_master(&dev_key(&d.id));
+            prefs.migrate(&d.id);
         }
         let now = Instant::now();
         App { audio, prefs, burst: 0, burst_start: now, pause_until: now }
     }
 
+    /// The output device an app row is on (where it plays, preferring an active session).
+    fn app_device(&self, key: &str) -> Option<String> {
+        self.audio.apps().into_iter().find(|a| a.key == key).map(|a| a.device_id)
+    }
+
     fn pref_key(&self, row: Option<&str>) -> Option<String> {
         match row {
-            Some(k) => Some(app_key(k)),
-            None => Some(MASTER.to_string()),
+            Some(k) => self.app_device(k).map(|d| app_key(&d, k)),
+            None => self.audio.default_device().map(|d| dev_key(&d.id)),
         }
     }
 
@@ -73,12 +78,12 @@ impl App {
             path: None,
             vol: d.vol(),
             mute: d.mute(),
-            pinned: pinned(MASTER.to_string()),
+            pinned: pinned(dev_key(&d.id)),
             device: None,
         }];
         let routable = self.audio.devices.len() > 1 && routing::available();
         rows.extend(self.audio.apps().into_iter().map(|a| Row {
-            pinned: pinned(app_key(&a.key)),
+            pinned: pinned(app_key(&a.device_id, &a.key)),
             device: routable.then(|| short_name(&a.device).to_string()),
             key: Some(a.key),
             name: a.name,
@@ -102,9 +107,10 @@ impl App {
         let Some(pk) = self.pref_key(row) else { return };
         let Some(d) = self.audio.default_device() else { return };
         let v = pct.min(100) as f32 / 100.0;
+        let dev = row.and_then(|k| self.app_device(k)).unwrap_or_default();
         let muted = match row {
             Some(k) => {
-                self.audio.set_app_vol(k, v);
+                self.audio.set_app_vol(&dev, k, v);
                 self.audio.apps().iter().any(|a| a.key == k && a.mute)
             }
             None => {
@@ -115,7 +121,7 @@ impl App {
         self.prefs.set_vol(&pk, pct);
         if muted {
             match row {
-                Some(k) => self.audio.set_app_mute(k, false),
+                Some(k) => self.audio.set_app_mute(&dev, k, false),
                 None => d.set_mute(false),
             }
             self.prefs.set_mute(&pk, None);
@@ -125,10 +131,11 @@ impl App {
     pub fn toggle_mute(&mut self, row: Option<&str>) {
         let Some(pk) = self.pref_key(row) else { return };
         let Some(d) = self.audio.default_device() else { return };
+        let dev = row.and_then(|k| self.app_device(k)).unwrap_or_default();
         let now_muted = match row {
             Some(k) => {
                 let m = !self.audio.apps().iter().any(|a| a.key == k && a.mute);
-                self.audio.set_app_mute(k, m);
+                self.audio.set_app_mute(&dev, k, m);
                 m
             }
             None => {
