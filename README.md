@@ -77,4 +77,6 @@ Working set includes shared system DLL pages, so private memory is the fairer nu
 
 ## License
 
-MIT
+Copyright (C) 2026 CyberKird. Latchmix is free software under the [GNU General Public License v3.0 or later](LICENSE): you can read, build, share and change it, and any modified version you distribute must stay open under the same license.
+
+Thanks to [EarTrumpet](https://github.com/File-New-Project/EarTrumpet) for the idea and for documenting how the undocumented Windows audio interfaces are laid out. No code was taken from it.
