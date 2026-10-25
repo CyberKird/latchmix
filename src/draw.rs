@@ -15,12 +15,13 @@ use windows::{
     },
 };
 
-pub const W: f32 = 340.0;
+pub const W: f32 = 380.0;
 pub const PAD: f32 = 16.0;
 pub const ROW_H: f32 = 60.0;
 pub const GAP: f32 = 12.0;
 pub const EMPTY_H: f32 = 44.0;
 pub const EDGE: f32 = 12.0;
+const CHIP_W: f32 = 150.0;
 
 #[derive(Clone, Copy)]
 struct Theme { bg: u32, border: u32, text: u32, dim: u32, track: u32, card: u32, ring: u32, accent: u32 }
@@ -80,14 +81,23 @@ pub fn center_y(s: f32, i: usize) -> f32 {
     row_top(s, i) + 40.0 * s
 }
 
-#[derive(PartialEq)]
-pub enum Part { Mute, Slider, Body }
+/// Horizontal extent of the device button on an app's title line.
+pub fn chip_x(s: f32) -> (f32, f32) {
+    let right = (W - PAD - 22.0) * s;
+    (right - CHIP_W * s, right)
+}
 
-pub fn hit(s: f32, nrows: usize, x: f32, y: f32) -> Option<(usize, Part)> {
-    let i = (0..nrows).find(|&i| y >= row_top(s, i) && y < row_top(s, i) + ROW_H * s)?;
+#[derive(PartialEq)]
+pub enum Part { Mute, Slider, Device, Body }
+
+pub fn hit(s: f32, rows: &[Row], x: f32, y: f32) -> Option<(usize, Part)> {
+    let i = (0..rows.len()).find(|&i| y >= row_top(s, i) && y < row_top(s, i) + ROW_H * s)?;
     let (x0, x1) = slider_x(s);
     let cy = center_y(s, i);
-    let part = if (y - cy).abs() > 17.0 * s {
+    let (cl, cr) = chip_x(s);
+    let part = if rows[i].device.is_some() && y < row_top(s, i) + 26.0 * s && x >= cl && x <= cr {
+        Part::Device
+    } else if (y - cy).abs() > 17.0 * s {
         Part::Body
     } else if x >= PAD * s && x <= PAD * s + 34.0 * s {
         Part::Mute
@@ -212,7 +222,21 @@ pub fn release(g: &mut Gdi) {
     }
 }
 
-pub fn render(g: &mut Gdi, dpi: u32, drag: &Option<Option<String>>, meters: &HashMap<Option<String>, f32>, rows: &[Row], hdc: HDC) {
+/// What the window knows that the rows do not: dpi, an active drag, meter levels, keyboard focus.
+pub struct View<'a> {
+    pub dpi: u32,
+    pub drag: &'a Option<Option<String>>,
+    pub meters: &'a HashMap<Option<String>, f32>,
+    pub focus: Option<usize>,
+}
+
+fn mix(a: u32, b: u32, t: f32) -> u32 {
+    let ch = |sh: u32| (((a >> sh & 0xff) as f32) * (1.0 - t) + ((b >> sh & 0xff) as f32) * t).round() as u32;
+    ch(16) << 16 | ch(8) << 8 | ch(0)
+}
+
+pub fn render(g: &mut Gdi, v: &View, rows: &[Row], hdc: HDC) {
+    let (dpi, drag, meters) = (v.dpi, v.drag, v.meters);
     let s = dpi as f32 / 96.0;
     let (w, h) = ((W * s).round() as i32, total_h(s, rows.len()));
     ensure_gdi(g, dpi, hdc, w, h);
@@ -223,6 +247,10 @@ pub fn render(g: &mut Gdi, dpi: u32, drag: &Option<Option<String>>, meters: &Has
     let (x0, x1) = slider_x(s);
     let sep = (row_top(s, 1) - GAP * s / 2.0) as i32;
     for px in (PAD * s) as i32..((W - PAD) * s) as i32 { buf[(sep * w + px) as usize] = t.border; }
+    if let Some(i) = v.focus.filter(|i| *i < rows.len()) {
+        let top = row_top(s, i);
+        rrect(buf, w, h, ((PAD - 8.0) * s, top - 2.0 * s, (W - PAD + 8.0) * s, top + (ROW_H - 4.0) * s), 8.0 * s, mix(t.bg, t.text, 0.07));
+    }
     for (i, r) in rows.iter().enumerate() {
         let cy = center_y(s, i);
         let frac = if r.mute { 0.0 } else { r.vol.clamp(0.0, 1.0) };
@@ -254,7 +282,13 @@ pub fn render(g: &mut Gdi, dpi: u32, drag: &Option<Option<String>>, meters: &Has
             tx += 28.0 * s;
         }
         let right = (W - PAD) * s - if r.pinned { 22.0 * s } else { 0.0 };
-        draw_text(dc, if is_dev { f_title } else { f_text }, t.text, &r.name, rc(tx, top, right, top + 26.0 * s), DT_VCENTER | DT_END_ELLIPSIS);
+        let (cl, cr) = chip_x(s);
+        let name_right = if r.device.is_some() { cl - 6.0 * s } else { right };
+        draw_text(dc, if is_dev { f_title } else { f_text }, t.text, &r.name, rc(tx, top, name_right, top + 26.0 * s), DT_VCENTER | DT_END_ELLIPSIS);
+        if let Some(dev) = &r.device {
+            draw_text(dc, f_small, t.dim, "\u{E70D}", rc(cr - 14.0 * s, top, cr, top + 26.0 * s), DT_CENTER | DT_VCENTER);
+            draw_text(dc, f_text, t.dim, dev, rc(cl, top, cr - 16.0 * s, top + 26.0 * s), DT_RIGHT | DT_VCENTER | DT_END_ELLIPSIS);
+        }
         if r.pinned {
             draw_text(dc, f_small, t.dim, "\u{E718}", rc(right + 4.0 * s, top, (W - PAD) * s, top + 26.0 * s), DT_RIGHT | DT_VCENTER);
         }

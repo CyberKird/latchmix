@@ -1,6 +1,7 @@
 //! Shared state (audio model + pinned prefs) and the operations the UI performs on it.
 use crate::{
     audio::Audio,
+    routing,
     store::{app_key, dev_key, Prefs},
 };
 use std::{cell::RefCell, time::{Duration, Instant}};
@@ -36,6 +37,13 @@ pub struct Row {
     pub vol: f32,
     pub mute: bool,
     pub pinned: bool,
+    /// Where an app plays, shown as a button. None when there is nothing to choose from.
+    pub device: Option<String>,
+}
+
+/// "Speakers (Realtek Audio)" -> "Speakers": the part in brackets is the driver name.
+pub fn short_name(name: &str) -> &str {
+    name.split(" (").next().unwrap_or(name).trim()
 }
 
 impl App {
@@ -53,7 +61,7 @@ impl App {
 
     pub fn rows(&self) -> Vec<Row> {
         let Some(d) = self.audio.default_device() else {
-            return vec![Row { key: None, name: "No output device".into(), path: None, vol: 0.0, mute: false, pinned: false }];
+            return vec![Row { key: None, name: "No output device".into(), path: None, vol: 0.0, mute: false, pinned: false, device: None }];
         };
         let pinned = |k: String| self.prefs.get(&k) != Default::default();
         let mut rows = vec![Row {
@@ -63,9 +71,12 @@ impl App {
             vol: d.vol(),
             mute: d.mute(),
             pinned: pinned(dev_key(&d.id)),
+            device: None,
         }];
-        rows.extend(d.apps().into_iter().map(|a| Row {
+        let routable = self.audio.devices.len() > 1 && routing::available();
+        rows.extend(self.audio.apps().into_iter().map(|a| Row {
             pinned: pinned(app_key(&a.key)),
+            device: routable.then(|| short_name(&a.device).to_string()),
             key: Some(a.key),
             name: a.name,
             path: a.path,
@@ -79,7 +90,7 @@ impl App {
     pub fn peaks(&self) -> Vec<(Option<String>, f32)> {
         let Some(d) = self.audio.default_device() else { return vec![] };
         let mut v = vec![(None, d.peak())];
-        v.extend(d.app_peaks().into_iter().map(|(k, p)| (Some(k), p)));
+        v.extend(self.audio.app_peaks().into_iter().map(|(k, p)| (Some(k), p)));
         v
     }
 
@@ -90,8 +101,8 @@ impl App {
         let v = pct.min(100) as f32 / 100.0;
         let muted = match row {
             Some(k) => {
-                d.set_app_vol(k, v);
-                d.apps().iter().any(|a| a.key == k && a.mute)
+                self.audio.set_app_vol(k, v);
+                self.audio.apps().iter().any(|a| a.key == k && a.mute)
             }
             None => {
                 d.set_vol(v);
@@ -101,7 +112,7 @@ impl App {
         self.prefs.set_vol(&pk, pct);
         if muted {
             match row {
-                Some(k) => d.set_app_mute(k, false),
+                Some(k) => self.audio.set_app_mute(k, false),
                 None => d.set_mute(false),
             }
             self.prefs.set_mute(&pk, None);
@@ -113,8 +124,8 @@ impl App {
         let Some(d) = self.audio.default_device() else { return };
         let now_muted = match row {
             Some(k) => {
-                let m = !d.apps().iter().any(|a| a.key == k && a.mute);
-                d.set_app_mute(k, m);
+                let m = !self.audio.apps().iter().any(|a| a.key == k && a.mute);
+                self.audio.set_app_mute(k, m);
                 m
             }
             None => {
@@ -124,6 +135,18 @@ impl App {
             }
         };
         self.prefs.set_mute(&pk, Some(now_muted));
+    }
+
+    /// Output devices to offer for an app, and the one it is pinned to (None = follows default).
+    pub fn route_choices(&self, key: &str) -> (Vec<(String, String)>, Option<String>) {
+        let devices = self.audio.devices.iter().map(|d| (d.id.clone(), short_name(&d.name).to_string())).collect();
+        let current = self.audio.pids(key).first().and_then(|p| routing::get(*p));
+        (devices, current)
+    }
+
+    /// Send an app to a device (None = back to the system default). Windows remembers this itself.
+    pub fn route(&self, key: &str, device_id: Option<&str>) {
+        routing::set(&self.audio.pids(key), device_id);
     }
 
     pub fn forget(&mut self, row: Option<&str>) {

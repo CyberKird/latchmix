@@ -55,7 +55,11 @@ impl IAudioSessionEvents_Impl for SessEv_Impl {
     }
     fn OnChannelVolumeChanged(&self, _: u32, _: *const f32, _: u32, _: *const GUID) -> Result<()> { Ok(()) }
     fn OnGroupingParamChanged(&self, _: *const GUID, _: *const GUID) -> Result<()> { Ok(()) }
-    fn OnStateChanged(&self, _: AudioSessionState) -> Result<()> { Ok(()) }
+    fn OnStateChanged(&self, state: AudioSessionState) -> Result<()> {
+        // Expired means the session is gone (for example the app was moved to another device).
+        post(self.0, if state == AudioSessionStateExpired { EV_SESSIONS } else { EV_VOLUME });
+        Ok(())
+    }
     fn OnSessionDisconnected(&self, _: AudioSessionDisconnectReason) -> Result<()> {
         post(self.0, EV_SESSIONS);
         Ok(())
@@ -85,6 +89,7 @@ pub struct Session {
     pub key: String,
     pub name: String,
     pub path: Option<String>,
+    pid: u32,
     ctl: IAudioSessionControl,
     vol: ISimpleAudioVolume,
     meter: IAudioMeterInformation,
@@ -103,6 +108,8 @@ pub struct AppRow {
     pub path: Option<String>,
     pub vol: f32,
     pub mute: bool,
+    pub device_id: String,
+    pub device: String,
 }
 
 pub struct Device {
@@ -173,51 +180,9 @@ impl Device {
     pub fn set_vol(&self, v: f32) { unsafe { let _ = self.ep.SetMasterVolumeLevelScalar(v.clamp(0.0, 1.0), ptr::null()); } }
     pub fn set_mute(&self, m: bool) { unsafe { let _ = self.ep.SetMute(m, ptr::null()); } }
 
-    /// One row per executable: Chrome often owns several sessions.
-    pub fn apps(&self) -> Vec<AppRow> {
-        let mut rows: Vec<AppRow> = vec![];
-        for s in &self.sessions {
-            if rows.iter().any(|r| r.key == s.key) { continue; }
-            rows.push(AppRow {
-                key: s.key.clone(),
-                name: s.name.clone(),
-                path: s.path.clone(),
-                vol: unsafe { s.vol.GetMasterVolume().unwrap_or(0.0) },
-                mute: unsafe { s.vol.GetMute().map(|b| b.as_bool()).unwrap_or(false) },
-            });
-        }
-        rows.sort_by_key(|r| r.name.to_lowercase());
-        rows
-    }
-
     /// Current output peak of the device, 0.0 to 1.0.
     pub fn peak(&self) -> f32 {
         unsafe { self.meter.GetPeakValue().unwrap_or(0.0) }
-    }
-
-    /// Peak per executable (the loudest of its sessions).
-    pub fn app_peaks(&self) -> Vec<(String, f32)> {
-        let mut out: Vec<(String, f32)> = vec![];
-        for s in &self.sessions {
-            let p = unsafe { s.meter.GetPeakValue().unwrap_or(0.0) };
-            match out.iter_mut().find(|(k, _)| *k == s.key) {
-                Some(e) => e.1 = e.1.max(p),
-                None => out.push((s.key.clone(), p)),
-            }
-        }
-        out
-    }
-
-    pub fn set_app_vol(&self, key: &str, v: f32) {
-        for s in self.sessions.iter().filter(|s| s.key == key) {
-            unsafe { let _ = s.vol.SetMasterVolume(v.clamp(0.0, 1.0), ptr::null()); }
-        }
-    }
-
-    pub fn set_app_mute(&self, key: &str, m: bool) {
-        for s in self.sessions.iter().filter(|s| s.key == key) {
-            unsafe { let _ = s.vol.SetMute(m, ptr::null()); }
-        }
     }
 }
 
@@ -228,17 +193,18 @@ impl Session {
             let c2: IAudioSessionControl2 = ctl.cast().ok()?;
             let vol: ISimpleAudioVolume = ctl.cast().ok()?;
             let meter: IAudioMeterInformation = ctl.cast().ok()?;
-            let (key, name, path) = if c2.IsSystemSoundsSession() == S_OK {
-                ("system sounds".to_string(), "System sounds".to_string(), None)
+            let (key, name, path, pid) = if c2.IsSystemSoundsSession() == S_OK {
+                ("system sounds".to_string(), "System sounds".to_string(), None, 0)
             } else {
-                let path = process_path(c2.GetProcessId().ok()?)?;
+                let pid = c2.GetProcessId().ok()?;
+                let path = process_path(pid)?;
                 let exe = path.rsplit('\\').next().unwrap_or(&path).to_lowercase();
                 let name = describe(&path, &exe);
-                (exe, name, Some(path))
+                (exe, name, Some(path), pid)
             };
             let ev: IAudioSessionEvents = SessEv(hwnd).into();
             ctl.RegisterAudioSessionNotification(&ev).ok()?;
-            Some(Session { key, name, path, ctl, vol, meter, ev })
+            Some(Session { key, name, path, pid, ctl, vol, meter, ev })
         }
     }
 }
@@ -335,6 +301,78 @@ impl Audio {
 
     pub fn sync_sessions(&mut self) {
         self.devices.iter_mut().for_each(Device::sync_sessions);
+    }
+
+    fn sessions_of<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a Session> {
+        self.devices.iter().flat_map(|d| d.sessions.iter()).filter(move |s| s.key == key)
+    }
+
+    /// One row per executable across every output device (Chrome often owns several sessions).
+    /// The device shown is where it is actually playing, preferring an active session.
+    pub fn apps(&self) -> Vec<AppRow> {
+        let mut rows: Vec<(AppRow, bool)> = vec![];
+        for d in &self.devices {
+            for s in &d.sessions {
+                let state = unsafe { s.ctl.GetState() };
+                if state == Ok(AudioSessionStateExpired) { continue; }
+                let active = state == Ok(AudioSessionStateActive);
+                match rows.iter_mut().find(|(r, _)| r.key == s.key) {
+                    Some((r, was_active)) => {
+                        if active && !*was_active {
+                            (r.device_id, r.device, *was_active) = (d.id.clone(), d.name.clone(), true);
+                        }
+                    }
+                    None => rows.push((
+                        AppRow {
+                            key: s.key.clone(),
+                            name: s.name.clone(),
+                            path: s.path.clone(),
+                            vol: unsafe { s.vol.GetMasterVolume().unwrap_or(0.0) },
+                            mute: unsafe { s.vol.GetMute().map(|b| b.as_bool()).unwrap_or(false) },
+                            device_id: d.id.clone(),
+                            device: d.name.clone(),
+                        },
+                        active,
+                    )),
+                }
+            }
+        }
+        let mut rows: Vec<AppRow> = rows.into_iter().map(|(r, _)| r).collect();
+        rows.sort_by_key(|r| r.name.to_lowercase());
+        rows
+    }
+
+    /// Peak per executable (the loudest of its sessions).
+    pub fn app_peaks(&self) -> Vec<(String, f32)> {
+        let mut out: Vec<(String, f32)> = vec![];
+        for s in self.devices.iter().flat_map(|d| d.sessions.iter()) {
+            let p = unsafe { s.meter.GetPeakValue().unwrap_or(0.0) };
+            match out.iter_mut().find(|(k, _)| *k == s.key) {
+                Some(e) => e.1 = e.1.max(p),
+                None => out.push((s.key.clone(), p)),
+            }
+        }
+        out
+    }
+
+    pub fn set_app_vol(&self, key: &str, v: f32) {
+        for s in self.sessions_of(key) {
+            unsafe { let _ = s.vol.SetMasterVolume(v.clamp(0.0, 1.0), ptr::null()); }
+        }
+    }
+
+    pub fn set_app_mute(&self, key: &str, m: bool) {
+        for s in self.sessions_of(key) {
+            unsafe { let _ = s.vol.SetMute(m, ptr::null()); }
+        }
+    }
+
+    /// Process ids that currently own a session for this executable.
+    pub fn pids(&self, key: &str) -> Vec<u32> {
+        let mut v: Vec<u32> = self.sessions_of(key).map(|s| s.pid).filter(|p| *p != 0).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     pub fn default_device(&self) -> Option<&Device> {

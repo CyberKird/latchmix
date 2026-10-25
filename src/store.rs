@@ -20,8 +20,12 @@ pub fn app_key(exe: &str) -> String {
     format!("app:{exe}")
 }
 
+pub fn dir() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("APPDATA")?).join("latchmix"))
+}
+
 fn path() -> Option<PathBuf> {
-    Some(PathBuf::from(std::env::var_os("APPDATA")?).join("latchmix").join("prefs.tsv"))
+    Some(dir()?.join("prefs.tsv"))
 }
 
 impl Prefs {

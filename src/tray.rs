@@ -136,6 +136,35 @@ fn autostart_enabled() -> bool {
     unsafe { RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_NAME, RRF_RT_REG_SZ, None, None, None) == ERROR_SUCCESS }
 }
 
+fn autostart_value() -> Option<String> {
+    let mut buf = [0u16; 520];
+    let mut bytes = (buf.len() * 2) as u32;
+    unsafe {
+        let r = RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_NAME, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as *mut c_void), Some(&mut bytes));
+        if r != ERROR_SUCCESS { return None; }
+    }
+    let len = (bytes as usize / 2).saturating_sub(1).min(buf.len());
+    Some(String::from_utf16_lossy(&buf[..len]))
+}
+
+/// Start with Windows is on by default (the point of the app is that settings survive a
+/// restart): a marker file makes the first run turn it on, so a later "off" in the menu is
+/// never overridden. If it is on but points at an old location of the exe, repoint it.
+pub fn init_autostart() {
+    let Some(dir) = crate::store::dir() else { return };
+    let marker = dir.join("first-run");
+    if !marker.exists() {
+        let _ = std::fs::create_dir_all(&dir);
+        if std::fs::write(&marker, "").is_ok() {
+            set_autostart(true);
+        }
+    } else if let (Some(have), Ok(exe)) = (autostart_value(), std::env::current_exe()) {
+        if have != format!("\"{}\"", exe.display()) {
+            set_autostart(true);
+        }
+    }
+}
+
 fn set_autostart(on: bool) {
     unsafe {
         if on {

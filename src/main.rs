@@ -4,6 +4,8 @@ mod audio;
 mod draw;
 mod store;
 mod tray;
+mod place;
+mod routing;
 mod ui;
 
 use audio::{take_events, Audio, EV_SESSIONS, EV_TOPOLOGY, EV_VOLUME, WM_AUDIO};
@@ -18,6 +20,7 @@ use windows::{
 };
 
 const TIMER_TOPOLOGY: usize = 1;
+const WM_SHOW_FLYOUT: u32 = WM_APP + 3;
 const NIN_SELECT: u32 = WM_USER;
 const NIN_KEYSELECT: u32 = WM_USER + 1;
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
@@ -41,6 +44,11 @@ fn on_audio(hwnd: HWND) {
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_AUDIO => on_audio(hwnd),
+        WM_SHOW_FLYOUT => {
+            let mut p = POINT::default();
+            unsafe { let _ = GetCursorPos(&mut p); }
+            ui::toggle(p);
+        }
         WM_TIMER if wp.0 == TIMER_TOPOLOGY => {
             unsafe { let _ = KillTimer(Some(hwnd), TIMER_TOPOLOGY); }
             app::with(|a| { a.audio.rebuild(); a.enforce(); });
@@ -76,6 +84,11 @@ fn main() -> Result<()> {
     unsafe {
         let _single = CreateMutexW(None, true, w!("Local\\LatchmixSingleInstance"))?;
         if GetLastError() == ERROR_ALREADY_EXISTS {
+            // Launched again (Start menu, shortcut): show the flyout of the running copy.
+            if let Ok(h) = FindWindowW(w!("LatchmixMain"), None) {
+                let _ = AllowSetForegroundWindow(ASFW_ANY);
+                let _ = PostMessageW(Some(h), WM_SHOW_FLYOUT, WPARAM(0), LPARAM(0));
+            }
             return Ok(());
         }
         CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
@@ -92,6 +105,7 @@ fn main() -> Result<()> {
         app::install(app::App::new(Audio::new(hwnd)?, store::Prefs::load()));
         app::with(|a| a.enforce());
         tray::update(hwnd, true);
+        tray::init_autostart();
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
